@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Meteoro</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: black;
+        }
+        canvas {
+            display: block;
+        }
+        #score {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 24px;
+        }
+    </style>
+</head>
+<body>
+    <div id="score">Pontos: <span id="points">0</span></div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const pointsDisplay = document.getElementById('points');
+
+        // Set canvas to full window size
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+
+        let points = 0;
+        let meteors = [];
+        let bullets = [];
+        let stars = [];
+
+        // Create starfield background
+        for(let i = 0; i < 200; i++) {
+            stars.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                size: Math.random() * 2
+            });
+        }
+
+        // Spaceship
+        const ship = {
+            x: canvas.width / 2,
+            y: canvas.height / 2,
+            rotation: 0,
+            size: 20
+        };
+
+        class Meteor {
+            constructor(size) {
+                this.size = size || 80;
+                const angle = Math.random() * Math.PI * 2;
+                // Reduzir ainda mais a distância para manter meteoros mais próximos do centro
+                const distance = Math.max(canvas.width, canvas.height) * 0.5; // reduzido de 0.7 para 0.5
+                this.x = canvas.width/2 + Math.cos(angle) * distance;
+                this.y = canvas.height/2 + Math.sin(angle) * distance;
+                const speedMultiplier = 0.1;
+                // Ajustar velocidade para direcionar mais ao centro
+                this.dx = ((Math.random() - 0.5) * 2 + speedMultiplier/2);
+                this.dy = ((Math.random() - 0.5) * 2 + speedMultiplier/2);
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.2;
+                
+                const colors = ['red', 'blue', 'yellow', 'green'];
+                this.color = colors[Math.floor(Math.random() * colors.length)];
+                
+                // Adicionar pontos do polígono irregular
+                this.points = [];
+                const numPoints = 8; // número de pontos do polígono
+                for (let i = 0; i < numPoints; i++) {
+                    const angle = (i / numPoints) * Math.PI * 2;
+                    const radius = this.size/2 * (0.9 + Math.random() * 0.4); // variação de 80% a 120% do tamanho
+                    this.points.push({
+                        x: Math.cos(angle) * radius,
+                        y: Math.sin(angle) * radius
+                    });
+                }
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                // Desenhar forma irregular
+                ctx.beginPath();
+                ctx.moveTo(this.points[0].x, this.points[0].y);
+                for (let i = 1; i < this.points.length; i++) {
+                    ctx.lineTo(this.points[i].x, this.points[i].y);
+                }
+                ctx.closePath();
+                
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 3;
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            update() {
+                this.x += this.dx;
+                this.y += this.dy;
+                this.rotation += this.rotationSpeed;
+
+                if(this.x < -this.size) this.x = canvas.width + this.size;
+                if(this.x > canvas.width + this.size) this.x = -this.size;
+                if(this.y < -this.size) this.y = canvas.height + this.size;
+                if(this.y > canvas.height + this.size) this.y = -this.size;
+            }
+
+            split() {
+                if(this.size > 20) {
+                    const newSize = this.size / 2;
+                    // Create two new meteors at the position of the destroyed one
+                    const meteor1 = new Meteor(newSize);
+                    const meteor2 = new Meteor(newSize);
+                    
+                    // Set their positions to the destroyed meteor's position
+                    meteor1.x = this.x;
+                    meteor1.y = this.y;
+                    meteor2.x = this.x;
+                    meteor2.y = this.y;
+                    
+                    // Give them slightly different velocities
+                    meteor1.dx = this.dx + (Math.random() - 0.5) * 2;
+                    meteor1.dy = this.dy + (Math.random() - 0.5) * 2;
+                    meteor2.dx = this.dx + (Math.random() - 0.5) * 2;
+                    meteor2.dy = this.dy + (Math.random() - 0.5) * 2;
+                    
+                    meteors.push(meteor1);
+                    meteors.push(meteor2);
+                }
+            }
+        }
+
+        // Game controls
+        let rotatingLeft = false;
+        let rotatingRight = false;
+        let shooting = false;
+        let lastShot = 0;
+
+        // Add pause state variable at the top with other game states
+        let isPaused = false;
+        let isGameOver = false;
+        // Add to the keydown event listener
+        document.addEventListener('keydown', (e) => {
+            if(e.key === 'ArrowLeft') rotatingLeft = true;
+            if(e.key === 'ArrowRight') rotatingRight = true;
+            if(e.key === ' ') shooting = true;
+            if(e.key.toLowerCase() === 'p') isPaused = !isPaused; // Toggle pause
+        });
+
+        // Modify the gameLoop function
+        document.addEventListener('keyup', (e) => {
+            if(e.key === 'ArrowLeft') rotatingLeft = false;
+            if(e.key === 'ArrowRight') rotatingRight = false;
+            if(e.key === ' ') shooting = false;
+        });
+
+        // Remova todas as outras funções draw() e gameLoop() e mantenha apenas esta versão:
+        // Adicione a função draw antes do gameLoop
+                function draw() {
+                    ctx.fillStyle = 'black';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    // Draw stars
+                    ctx.fillStyle = 'white';
+                    stars.forEach(star => {
+                        ctx.beginPath();
+                        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+
+                    // Draw ship
+                    ctx.save();
+                    ctx.translate(ship.x, ship.y);
+                    ctx.rotate(ship.rotation);
+                    ctx.beginPath();
+                    ctx.moveTo(0, -ship.size);
+                    ctx.lineTo(ship.size/2, ship.size);
+                    ctx.lineTo(-ship.size/2, ship.size);
+                    ctx.closePath();
+                    ctx.strokeStyle = 'white';
+                    ctx.fillStyle = 'white';
+                    ctx.fill();
+                    ctx.stroke();
+                    ctx.restore();
+
+                    // Draw bullets
+                    ctx.fillStyle = '#ff0';
+                    bullets.forEach(bullet => {
+                        ctx.beginPath();
+                        ctx.arc(bullet.x, bullet.y, bullet.size, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+
+                    // Draw meteors
+                    meteors.forEach(meteor => meteor.draw());
+
+                    // Draw game over text if game is over
+                    if (isGameOver) {
+                        ctx.fillStyle = 'red';
+                        ctx.font = '72px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2);
+                        ctx.font = '36px Arial';
+                        ctx.fillText(`Score: ${points}`, canvas.width/2, canvas.height/2 + 50);
+                    }
+
+                    // Draw pause text if game is paused
+                    if (isPaused) {
+                        ctx.fillStyle = 'yellow';
+                        ctx.font = '48px Arial';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('PAUSA', canvas.width/2, canvas.height/2);
+                    }
+                }
+        // Adicione estas funções antes do gameLoop
+                function shoot() {
+                    const now = Date.now();
+                    if(now - lastShot > 100) {
+                        const angle = ship.rotation - Math.PI/2;
+                        bullets.push({
+                            x: ship.x + Math.cos(angle) * ship.size,
+                            y: ship.y + Math.sin(angle) * ship.size,
+                            dx: Math.cos(angle) * 8,
+                            dy: Math.sin(angle) * 8,
+                            size: 3.5
+                        });
+                        lastShot = now;
+                    }
+                }
+
+                function update() {
+                    // Se for game over, não atualiza nada
+                    if (isGameOver) return;
+
+                    // Update ship rotation
+                    if(rotatingLeft) ship.rotation -= 0.05;
+                    if(rotatingRight) ship.rotation += 0.05;
+                    if(shooting) shoot();
+
+                    // Update bullets
+                    bullets = bullets.filter(bullet => {
+                        bullet.x += bullet.dx;
+                        bullet.y += bullet.dy;
+                        return bullet.x > 0 && bullet.x < canvas.width &&
+                               bullet.y > 0 && bullet.y < canvas.height;
+                    });
+
+                    // Update meteors and check ship collision
+                    meteors.forEach(meteor => {
+                        meteor.update();
+                        
+                        // Check collision with ship
+                        const dx = meteor.x - ship.x;
+                        const dy = meteor.y - ship.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        
+                        // Na parte da colisão com o meteoro
+                        if(distance < (meteor.size/2 + ship.size/2)) {
+                            isGameOver = true;
+                            // Limpa todos os inputs
+                            rotatingLeft = false;
+                            rotatingRight = false;
+                            shooting = false;
+                            keys = {};  // Reseta todas as teclas
+
+                            setTimeout(() => {
+                                isGameOver = false;
+                                meteors = [];
+                                bullets = [];
+                                points = 0;
+                                pointsDisplay.textContent = points;
+                                ship.x = canvas.width / 2;
+                                ship.y = canvas.height / 2;
+                                ship.rotation = 0;
+                                // Reinicia os meteoros com velocidade normal
+                                createInitialMeteors();
+                            }, 4000);
+                        }
+                    });
+
+                    // Adicione esta nova função após o gameLoop
+                    function createInitialMeteors() {
+                        for(let i = 0; i < 6; i++) {
+                            meteors.push(new Meteor(Math.random() * (80 - 70) + 70));
+                        }
+                    }
+                    // Collision detection
+                    bullets.forEach((bullet, bulletIndex) => {
+                        meteors.forEach((meteor, meteorIndex) => {
+                            const dx = bullet.x - meteor.x;
+                            const dy = bullet.y - meteor.y;
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            if(distance < meteor.size/2) {
+                                bullets.splice(bulletIndex, 1);
+                                meteors.splice(meteorIndex, 1);
+                                meteor.split();
+                                points += 10;
+                                pointsDisplay.textContent = points;
+                            }
+                        });
+                    });
+
+                    // Spawn new meteors
+                    if(meteors.length < 10) {
+                        // Conta quantos meteoros grandes existem (tamanho 80)
+                        const bigMeteors = meteors.filter(m => m.size >= 80).length;
+                        
+                        // Se não houver meteoros grandes, força a criação de um
+                        if(bigMeteors === 6) {
+                            meteors.push(new Meteor(80));
+                        } else {
+                            meteors.push(new Meteor(Math.random() * (80 - 70) + 70));
+                        }
+                    }
+                }
+        function gameLoop() {
+            if (!isPaused) {
+                update();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        gameLoop();
+    </script>
+</body>
+</html>
