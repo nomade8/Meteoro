@@ -55,7 +55,7 @@
         // Adicionado: definir funções no escopo do script
         function createInitialMeteors() {
             for (let i = 0; i < 6; i++) {
-                meteors.push(new Meteor(Math.random() * (80 - 70) + 70));
+                meteors.push(new Meteor(Math.random() * 20 + 80));
             }
         }
 
@@ -447,12 +447,14 @@
 
                     // Spawn de novos meteoros (com cooldown)
                     const now = Date.now();
-                    if (meteors.length < 10 && now - lastMeteorSpawn > 450) {
+                    if (now - lastMeteorSpawn > 300) {
                         const bigMeteors = meteors.filter(m => m.size >= 80).length;
-                        if (bigMeteors === 0) {
-                            meteors.push(new Meteor(80));
-                        } else {
-                            meteors.push(new Meteor(Math.random() * (80 - 70) + 70));
+                        if (bigMeteors < 3) {
+                            let spawnSize = Math.random() * 20 + 80; // 80 a 100 para grandes
+                            meteors.push(new Meteor(spawnSize));
+                        } else if (meteors.length < 15) {
+                            let spawnSize = Math.random() * 40 + 40; // 40 a 80 para médios
+                            meteors.push(new Meteor(spawnSize));
                         }
                         lastMeteorSpawn = now;
                     }
