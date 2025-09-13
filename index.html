@@ -1,476 +1,572 @@
 <!DOCTYPE html>
-<html>
+<html lang="pt-br">
 <head>
-    <title>Meteoro</title>
-    <style>
-        body {
-            margin: 0;
-            overflow: hidden;
-            /* fundo com leve gradiente espacial */
-            background: radial-gradient(1200px 800px at 50% 50%, #0b0f1a 0%, #000 60%);
-        }
-        canvas {
-            display: block;
-        }
-        #score {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            color: white;
-            font-family: Arial, sans-serif;
-            font-size: 24px;
-            /* melhorias de legibilidade */
-            background: rgba(0, 0, 0, 0.35);
-            padding: 8px 12px;
-            border-radius: 10px;
-            box-shadow: 0 0 12px rgba(255,255,255,0.12);
-            backdrop-filter: blur(2px);
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Side-Scroller 2D - Caverna</title>
+  <style>
+    :root{
+      --bg:#0c0f14; --rock:#16202a; --rock2:#0f171f; --hud:#e6f1ff; --accent:#46d3ff;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0;background:radial-gradient(1200px 600px at 50% 20%,#0e141d 0%, var(--bg) 60%);font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif;color:var(--hud);overflow:hidden}
+    #game{display:block;width:100vw;height:100vh}
+    .hud{position:fixed;left:16px;top:12px;font-weight:600;text-shadow:0 2px 4px #0006;letter-spacing:.5px}
+    .hint{position:fixed;right:16px;top:12px;opacity:.7;font-size:.9rem}
+    .overlay{position:fixed;inset:0;display:none;place-items:center;background:#0008;backdrop-filter: blur(2px)}
+    .panel{background:#0b1220;border:1px solid #1f2b3a;color:var(--hud);padding:24px 28px;border-radius:12px;box-shadow:0 10px 30px #0008;text-align:center;min-width:280px}
+    .panel h1{margin:.2rem 0 1rem;font-weight:800;letter-spacing:.6px}
+    .panel p{margin:.2rem 0 .8rem;opacity:.85}
+    .panel button{cursor:pointer;margin-top:10px;padding:10px 16px;border-radius:999px;border:1px solid #2a3a4e;background:linear-gradient(#1a2a3a,#152231);color:#eaf6ff;font-weight:700;letter-spacing:.5px}
+    .panel button:hover{filter:brightness(1.1)}
+  </style>
 </head>
 <body>
-    <div id="score">Pontos: <span id="points">0</span></div>
-    <canvas id="gameCanvas"></canvas>
+  <canvas id="game"></canvas>
+  <div class="hud" id="score">Pontuação: 0</div>
+  <div class="hint">Setas ↑/↓ ou mova o mouse para guiar a nave</div>
+  <div class="overlay" id="over">
+    <div class="panel">
+      <h1>Game Over</h1>
+      <p id="finalScore">Você percorreu 0 m</p>
+      <button id="restart">Reiniciar</button>
+    </div>
+  </div>
 
-    <script>
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const pointsDisplay = document.getElementById('points');
+<script>
+(()=>{
+  'use strict';
+  // Canvas e contexto (com suporte a alta densidade de pixels)
+  const canvas=document.getElementById('game');
+  const ctx=canvas.getContext('2d');
+  let W=0,H=0,DPR=1;
+  const DEBUG=false;
+  const MAX_SPEED=280;
+  let debugNextTime=0; let lastHudText=''; let hudNextTime=0;
+  const CSS_COLORS={
+    rock: getComputedStyle(document.documentElement).getPropertyValue('--rock').trim(),
+    rock2: getComputedStyle(document.documentElement).getPropertyValue('--rock2').trim()
+  };
 
-        // Set canvas to full window size
-        function resizeCanvas() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+  // Estado do jogo
+  let running=true, meters=0, points=0, speed=160, time=0;
+  // NOVO: vida do jogador (paredes causam dano, inimigos matam)
+  const MAX_HP=3; let hp=MAX_HP; let wallIFrames=0; // segundos de invulnerabilidade após dano
+
+  // Nave do jogador
+  const ship={x:0,y:0,r:14,vy:0,color:'#6cf'};
+  let up=false,down=false, mouseY=null, mouseActive=false;
+  
+  // NOVO: entidades de combate
+  const enemies=[]; // esferas vermelhas
+  const bullets=[]; // projéteis do jogador
+  let enemySpawn=0; // temporizador de spawn
+  let fireCooldown=0; // intervalo entre tiros
+  // NOVO: partículas para explosões
+  const particles=[];
+  // NOVO: power-ups de cura (esferas verdes)
+  const heals=[];
+  let healSpawn=0;
+  let allowHeals=false; // só libera após perder pelo menos 1 vida
+  let firstHealBoost=false; // garante a 1ª cura logo após perder vida
+  let healsCooldown=0; // espera curta após dano antes de processar curas
+  // Caverna procedural (RESTAURADO)
+  const segW=14; // largura de cada segmento
+  const topY=[], botY=[]; // arrays paralelos
+  let scrollX=0; // deslocamento horizontal do mapa
+  let center=0, half=0; // estado para geração
+  const $score=document.getElementById('score');
+  const $over=document.getElementById('over');
+  const $final=document.getElementById('finalScore');
+  document.getElementById('restart').addEventListener('click', restart);
+
+  function resize(){
+    DPR=window.devicePixelRatio||1;
+    W=canvas.style.width=window.innerWidth+'px';
+    H=canvas.style.height=window.innerHeight+'px';
+    W=window.innerWidth; H=window.innerHeight;
+    canvas.width=Math.floor(W*DPR); canvas.height=Math.floor(H*DPR);
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    // reposiciona nave
+    ship.x=W*0.28; ship.y=H*0.5;
+    // (re)cria caverna mantendo parâmetros
+    initCave();
+  }
+
+  // Inicializa/Reseta estruturas da caverna
+  function initCave(){
+    topY.length=0; botY.length=0; scrollX=0; meters=0; points=0; time=0; speed=100; running=true; hideOverlay();
+    // reset de controles e física da nave
+    up=false; down=false; mouseActive=true; mouseY=H*0.5; ship.vy=0;
+    // reset de vida
+    hp=MAX_HP; wallIFrames=0;
+    // NOVO: limpar inimigos e projéteis
+    enemies.length=0; bullets.length=0; enemySpawn=0; fireCooldown=0; particles.length=0;
+    // NOVO: limpar power-ups de cura
+    heals.length=0;
+    healSpawn = randRange(2.8, 5.4); // reset temporizador para spawn das curas (raras)
+    // parâmetros de geração
+    center=H*0.5; // linha central
+    half=Math.min(220,Math.max(120,H*0.30))/2; // semi-altura do corredor
+    // preenche segmentos necessários para cobrir a tela + margem
+    const need=Math.ceil(W/segW)+4;
+    for(let i=0;i<need;i++) pushSegment();
+    // posiciona a nave com segurança dentro do corredor atual
+    ship.x=W*0.28;
+    const bnds=caveBoundsAt(ship.x);
+    const safeY=(bnds.top + bnds.bot)*0.5;
+    ship.y=clamp(safeY, bnds.top + ship.r + 6, bnds.bot - ship.r - 6);
+  }
+
+  // Geração procedural simples (random walk com ruído)
+  function pushSegment(){
+    const jigC=18, jigG=10; // intensidade das variações
+    // passeios aleatórios com limites
+    center+=randRange(-jigC,jigC);
+    half+=randRange(-jigG,jigG);
+    const minGap=Math.max(90, H*0.18), maxGap=Math.max(minGap+60, H*0.42);
+    half=clamp(half, minGap/2, maxGap/2);
+    const margin=30;
+    center=clamp(center, margin+half, H-margin-half);
+    // ruído adicional nas paredes para deixá-las irregulares
+    const t=center-half + randRange(-10,10);
+    const b=center+half + randRange(-10,10);
+    topY.push(t); botY.push(b);
+  }
+
+  // Atualiza o mundo
+  let last=performance.now();
+  function tick(now){
+    const dt=Math.min(0.033,(now-last)/1000); last=now; 
+    if(!running){ 
+      draw(); 
+      requestAnimationFrame(tick); 
+      return; 
+    }
+    try{
+      // distância em "m" considerando escala (px -> m): 0.1
+      const dMeters = speed*dt*0.1;
+      meters += dMeters;
+      points += 2 * dMeters; // 2 pontos por metro andado
+      time+=dt;
+      speed = Math.min(MAX_SPEED, speed + dt*4); // aumenta dificuldade com limite superior
+      fireCooldown=Math.max(0, fireCooldown-dt);
+      wallIFrames=Math.max(0, wallIFrames-dt);
+ 
+      updateCave(dt);
+      updateShip(dt);
+      // NOVO: atualizar inimigos e projéteis
+      updateEnemies(dt);
+      updateBullets(dt);
+      // NOVO: atualizar partículas
+      updateParticles(dt);
+      // NOVO: atualizar power-ups de cura
+      updateHeals(dt);
+  
+      checkCollision(); // colisão com paredes
+      // NOVO: coleta de cura
+      checkHealCollisions();
+      checkSphereHits(); // colisões com esferas e projéteis
+      draw();
+    }catch(e){
+      running=false;
+      try{ showOverlay(Math.floor(meters)); }catch(_){ /* ignore */ }
+      const msg = (e && e.message) ? e.message : 'erro desconhecido';
+      $score.textContent = `Falha detectada: ${msg}`;
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function updateCave(dt){
+    scrollX += speed*dt;
+    let steps = Math.floor(scrollX/segW);
+    if(steps>0){
+      const maxSteps=200;
+      steps = Math.min(steps, maxSteps);
+      scrollX -= steps*segW;
+      for(let s=0; s<steps; s++){
+        topY.shift(); botY.shift(); pushSegment();
+      }
+    }
+  }
+
+  function updateShip(dt){
+    const keySpeed=260; // velocidade vertical por teclas
+    // input por teclado
+    ship.vy = (up? -keySpeed:0) + (down? keySpeed:0);
+    ship.y += ship.vy*dt;
+    // input por mouse (segue suavemente quando ativo)
+    if(mouseActive && mouseY!=null){
+      const follow=1-Math.exp(-6*dt); // suavização exponencial
+      ship.y += (mouseY-ship.y)*follow;
+    }
+    ship.y=clamp(ship.y, 0+ship.r, H-ship.r);
+  }
+
+  // Obtém limites da caverna na posição X da nave (interpolação linear)
+  function caveBoundsAt(x){
+    const n=topY.length;
+    if(n<2){ return {top:H*0.3, bot:H*0.7}; }
+    const local=x+scrollX;
+    let i=Math.floor(local/segW);
+    // garante que i+1 exista
+    i=Math.max(0, Math.min(n-2, i));
+    const t=fract(local/segW);
+    const i2=i+1;
+    const t1=topY[i], t2=topY[i2], b1=botY[i], b2=botY[i2];
+    if(!Number.isFinite(t1) || !Number.isFinite(t2) || !Number.isFinite(b1) || !Number.isFinite(b2)){
+      return {top:H*0.3, bot:H*0.7};
+    }
+    let top=lerp(t1, t2, t);
+    let bot=lerp(b1, b2, t);
+    // valida e corrige intervalos ruins
+    if(!Number.isFinite(top) || !Number.isFinite(bot) || (bot-top)<60){
+      return {top:H*0.3, bot:H*0.7};
+    }
+    return {top,bot};
+  }
+
+  function checkCollision(){
+    let {top, bot}=caveBoundsAt(ship.x);
+    if(!Number.isFinite(top) || !Number.isFinite(bot)) {
+      top = H*0.3;
+      bot = H*0.7;
+    }
+    const outTop = (ship.y - ship.r) <= top;
+    const outBot = (ship.y + ship.r) >= bot;
+    const hitWall = outTop || outBot;
+  
+    // Sempre manter a nave dentro dos limites da caverna
+    if(hitWall){
+      ship.y = clamp(ship.y, top + ship.r + 2, bot - ship.r - 2);
+      if(!Number.isFinite(ship.y)) {
+        ship.y = (top + bot) * 0.5;
+      }
+    }
+  
+    // Apenas aplica dano quando encostar e não estiver em iFrames
+    if(hitWall && wallIFrames<=0){
+      hp = Math.max(0, hp-1);
+      wallIFrames = 1.0; // 1 segundo de invulnerabilidade contra paredes
+      if(hp<=0){ 
+        running=false; showOverlay(Math.floor(meters));
+        return; 
+      }
+    }
+  }
+
+  // Desenho geral
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    drawCave();
+    // NOVO: desenhar inimigos antes da nave
+    drawEnemies();
+    // NOVO: desenhar curas (esferas verdes)
+    drawHeals();
+    drawShip();
+    // NOVO: desenhar projéteis acima
+    drawBullets();
+    // NOVO: desenhar partículas por último
+    drawParticles();
+    drawHUD();
+  }
+
+  // Desenha cave: duas massas (teto e piso)
+  function drawCave(){
+    // camada distante para senso de profundidade
+    ctx.fillStyle=CSS_COLORS.rock2;
+    drawWall(8,true); drawWall(8,false);
+    // camada principal
+    ctx.fillStyle=CSS_COLORS.rock;
+    drawWall(0,true); drawWall(0,false);
+  }
+
+  function drawWall(offset, isTop){
+    ctx.beginPath();
+    const arr=isTop?topY:botY; const startY=isTop?0:H; const edge=isTop?0:H;
+    ctx.moveTo(-scrollX, startY);
+    for(let i=0;i<arr.length;i++){
+      const x=i*segW - scrollX; const y=(isTop? arr[i]-offset: arr[i]+offset);
+      ctx.lineTo(x, y);
+    }
+    ctx.lineTo(W, startY); ctx.closePath(); ctx.fill();
+  }
+
+  function drawShip(){
+    const x=ship.x, y=ship.y, r=ship.r;
+    // corpo (triângulo)
+    ctx.save();
+    ctx.translate(x,y);
+    // efeito de piscar quando invulnerável (após bater na parede)
+    if(wallIFrames>0){ ctx.globalAlpha = 0.5 + 0.5*Math.sin(time*20); }
+    ctx.fillStyle=ship.color; ctx.strokeStyle='#002b40'; ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(r,0); ctx.lineTo(-r*0.8,-r*0.7); ctx.lineTo(-r*0.8,r*0.7); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    // chama (efeito simples)
+    ctx.beginPath(); ctx.fillStyle='#ffb347';
+    ctx.moveTo(-r*0.8,0); ctx.lineTo(-r*1.2,-3); ctx.lineTo(-r*1.2,3); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // NOVO: desenho dos inimigos (esferas vermelhas) e projéteis
+  function drawEnemies(){
+    for(const e of enemies){
+      if(!Number.isFinite(e.x) || !Number.isFinite(e.y) || !Number.isFinite(e.r)) continue;
+      // gradiente removido para reduzir custo de GPU
+      ctx.fillStyle='#ff3b3b';
+      ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#650000'; ctx.lineWidth=1.5; ctx.stroke();
+    }
+  }
+  function drawBullets(){
+    for(const b of bullets){
+      ctx.fillStyle='#aaf7ff';
+      ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+    }
+  }
+  // NOVO: desenho das curas (esferas verdes)
+  function drawHeals(){
+    for(const h of heals){
+      if(!Number.isFinite(h.x) || !Number.isFinite(h.y) || !Number.isFinite(h.r)) continue;
+      // simples preenchimento sólido para reduzir custo de GPU
+      ctx.fillStyle='#1fd16f';
+      ctx.beginPath(); ctx.arc(h.x,h.y,h.r,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#0a5a35'; ctx.lineWidth=1.5; ctx.stroke();
+    }
+  }
+
+  // NOVO: lógica das curas
+  function spawnHeal(){
+    const x = W + segW*2;
+    const r = randRange(10,14);
+    const bounds = caveBoundsAt(x); // mesma lógica das vermelhas (spawn dentro do corredor)
+    const minY = bounds.top + r + 8;
+    const maxY = bounds.bot - r - 8;
+    const y = clamp(randRange(minY, maxY), minY, maxY);
+    heals.push({x,y,r});
+  }
+  function updateHeals(dt){
+    // Spawn semelhante aos inimigos, mas mais raro
+    healSpawn -= dt;
+    if(healSpawn <= 0){
+      if(Math.random() < 0.25){ // raridade: ~25% por janela de spawn
+        spawnHeal();
+      }
+      const difficulty = Math.max(0.5, 1.0 - time*0.002);
+      healSpawn = randRange(3.5, 6.5) * difficulty; // intervalos mais longos que inimigos
+    }
+  
+    const vx=speed*0.9 + 70;
+    for(let i=heals.length-1;i>=0;i--){
+      const h=heals[i];
+      if(!h) { heals.splice(i,1); continue; }
+      h.x -= vx*dt;
+  
+      // Segue o "centro" do corredor, como as bolas vermelhas
+      const b = caveBoundsAt(h.x);
+      const target = (b.top + b.bot) / 2;
+      if(Number.isFinite(target)){
+        h.y += (target - h.y) * Math.min(1, 1.2*dt);
+      }
+  
+      if(h.x < -h.r-60 || !Number.isFinite(h.x) || !Number.isFinite(h.y)) {
+        heals.splice(i,1);
+      }
+    }
+  }
+  function checkHealCollisions(){
+    for(let i=heals.length-1;i>=0;i--){
+      const h=heals[i];
+      if(!h || !Number.isFinite(h.x) || !Number.isFinite(h.y) || !Number.isFinite(h.r)) { heals.splice(i,1); continue; }
+      const dx=h.x-ship.x, dy=h.y-ship.y, rr=(h.r+ship.r);
+      if(dx*dx+dy*dy <= rr*rr){
+        hp = Math.min(MAX_HP, hp+1); // +1 vida até o máximo
+        points += 100; // +100 pontos
+        heals.splice(i,1);
+      }
+    }
+  }
+  function drawHUD(){
+    // throttling do HUD para reduzir custo de DOM
+    if(time < hudNextTime) return;
+    hudNextTime = time + 0.16; // ~6 atualizações por segundo
+    const hearts = '❤'.repeat(hp) + '♡'.repeat(MAX_HP - hp);
+    if(!DEBUG){
+      const txt = `Distância: ${Math.floor(meters)} m  |  Pontos: ${Math.floor(points)}  |  Vida: ${hearts}`;
+      if(txt!==lastHudText){ $score.textContent=txt; lastHudText=txt; }
+    } else {
+      if(time < debugNextTime) return; // limita atualizações do HUD em modo debug
+      debugNextTime = time + 0.25; // 4x por segundo
+      const dbg = `hp:${hp} ifr:${wallIFrames.toFixed(2)} heals:${heals.length} allow:${allowHeals} t:${time.toFixed(1)} spd:${Math.round(speed)} hs:${healSpawn.toFixed(2)}`;
+      const txt = `Distância: ${Math.floor(meters)} m  |  Pontos: ${Math.floor(points)}  |  Vida: ${hearts}\n${dbg}`;
+      if(txt!==lastHudText){
+        $score.textContent = txt;
+        $score.style.whiteSpace = 'pre';
+        lastHudText = txt;
+      }
+    }
+  }
+
+  function gameOver(){
+    running=false; showOverlay();
+  }
+
+  // NOVO: inimigos e tiros
+  function spawnEnemy(){
+    const x=W + segW*2; // nasce logo após os segmentos gerados à direita
+    const r=randRange(10,18);
+    const bounds=caveBoundsAt(x);
+    const y=clamp(randRange(bounds.top + r + 8, bounds.bot - r - 8), bounds.top + r + 8, bounds.bot - r - 8);
+    enemies.push({x,y,r,color:'#ff3b3b'});
+  }
+
+  function updateEnemies(dt){
+    enemySpawn-=dt;
+    if(enemySpawn<=0){
+      // chance de realmente spawnar (para não ter bolas o tempo todo)
+      if(Math.random() < 0.85){
+        spawnEnemy();
+      }
+      // próximo intervalo aleatório, com leve redução ao longo do tempo
+      const difficulty = Math.max(0.4, 1.0 - time*0.003);
+      enemySpawn = randRange(1.2, 3.2) * difficulty;
+    }
+    const vx=speed*0.9 + 80;
+    for(let i=enemies.length-1;i>=0;i--){
+      const e=enemies[i];
+      e.x-=vx*dt;
+      const b=caveBoundsAt(e.x);
+      const target=(b.top+b.bot)/2;
+      if(Number.isFinite(target)){
+        e.y += (target - e.y) * Math.min(1, 1.5*dt);
+      }
+      if(e.x < -e.r-60 || !Number.isFinite(e.x) || !Number.isFinite(e.y)) enemies.splice(i,1);
+    }
+  }
+
+  function updateBullets(dt){
+    for(let i=bullets.length-1;i>=0;i--){
+      const b=bullets[i];
+      b.x+=b.vx*dt; b.y+=b.vy*dt;
+      if(b.x - b.r > W+50) bullets.splice(i,1);
+    }
+  }
+
+  function fire(){
+    if(!running || fireCooldown>0) return;
+    const r=3.5;
+    bullets.push({x:ship.x + ship.r*0.9, y:ship.y, r, vx:520, vy:0});
+    fireCooldown=0.12; // taxa de disparo
+  }
+
+  // NOVO: gerenciador de partículas
+  function spawnExplosion(x,y){
+    const count = 14 + Math.floor(Math.random()*8);
+    for(let i=0;i<count;i++){
+      const ang = Math.random()*Math.PI*2;
+      const spd = 120 + Math.random()*220;
+      const r = 1.5 + Math.random()*2.5;
+      const life = 0.5 + Math.random()*0.4;
+      particles.push({x,y,vx:Math.cos(ang)*spd,vy:Math.sin(ang)*spd,r,life,maxLife:life});
+    }
+  }
+  function updateParticles(dt){
+    for(let i=particles.length-1;i>=0;i--){
+      const p=particles[i];
+      p.life -= dt; if(p.life<=0){ particles.splice(i,1); continue; }
+      p.x += p.vx*dt; p.y += p.vy*dt;
+      // leve desaceleração e "gravidade" sutil
+      p.vx *= 0.98; p.vy = p.vy*0.98 + 20*dt;
+    }
+  }
+
+  // NOVO: desenho das partículas de explosão
+  function drawParticles(){
+    if(particles.length===0) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for(const p of particles){
+      const t = Math.max(0, Math.min(1, p.life / p.maxLife));
+      const a = t; // desvanece ao fim da vida
+      const r = p.r * (0.8 + 0.4*(1 - t)); // leve redução no raio
+      ctx.fillStyle = `rgba(255,120,40,${a})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function checkSphereHits(){
+    // colisão nave-esfera
+    for(const e of enemies){
+      const dx=e.x-ship.x, dy=e.y-ship.y, rr=(e.r+ship.r); if(dx*dx+dy*dy <= rr*rr){ gameOver(); return; }
+    }
+    // colisão projétil-esfera
+    outer: for(let i=enemies.length-1;i>=0;i--){
+      const e=enemies[i];
+      for(let j=bullets.length-1;j>=0;j--){
+        const b=bullets[j];
+        const dx=e.x-b.x, dy=e.y-b.y, rr=(e.r+b.r);
+        if(dx*dx+dy*dy <= rr*rr){
+          // explode!
+          spawnExplosion(e.x,e.y);
+          enemies.splice(i,1); bullets.splice(j,1); points+=50; // +50 por esfera destruída
+          continue outer;
         }
-        resizeCanvas();
-        window.addEventListener('resize', resizeCanvas);
-
-        let points = 0;
-        let meteors = [];
-        let bullets = [];
-        let stars = [];
-        let particles = [];           // partículas de explosão
-        let lastMeteorSpawn = 0;      // cooldown para spawn de meteoros
-
-        // Adicionado: definir funções no escopo do script
-        function createInitialMeteors() {
-            for (let i = 0; i < 6; i++) {
-                meteors.push(new Meteor(Math.random() * 20 + 80));
-            }
+      }
+    }
+    // NOVO: colisão projétil-cura (explode sem ganho)
+    heal_outer: for(let i=heals.length-1;i>=0;i--){
+      const h=heals[i];
+      for(let j=bullets.length-1;j>=0;j--){
+        const b=bullets[j];
+        const dx=h.x-b.x, dy=h.y-b.y, rr=(h.r+b.r);
+        if(dx*dx+dy*dy <= rr*rr){
+          // explode sem ganho de vida ou pontos
+          spawnExplosion(h.x,h.y);
+          heals.splice(i,1); bullets.splice(j,1);
+          continue heal_outer;
         }
+      }
+    }
+  }
 
-        function createExplosion(x, y, color) {
-            for (let i = 0; i < 24; i++) {
-                particles.push({
-                    x,
-                    y,
-                    dx: (Math.random() - 0.5) * 6,
-                    dy: (Math.random() - 0.5) * 6,
-                    life: 42,
-                    size: 2 + Math.random() * 2.5,
-                    color
-                });
-            }
-        }
+  function showOverlay(final){
+    $final.textContent=`Você percorreu ${final} m`;
+    $over.style.display='grid';
+  }
+  function hideOverlay(){ $over.style.display='none'; }
 
-        // Spaceship
-        const ship = {
-            x: canvas.width / 2,
-            y: canvas.height / 2,
-            rotation: 0,
-            size: 20,
-            vx: 0,  // velocidade em x
-            vy: 0   // velocidade em y
-        };
+  function restart(){
+    initCave();
+    lastHudText = '';
+    hudNextTime = 0;
+    drawHUD();
+  }
 
-        class Meteor {
-            constructor(size) {
-                this.size = size || 80;
-                const angle = Math.random() * Math.PI * 2;
-                const distance = Math.max(canvas.width, canvas.height) * 0.5;
-                this.x = canvas.width/2 + Math.cos(angle) * distance;
-                this.y = canvas.height/2 + Math.sin(angle) * distance;
-            
-                // velocidade aleatória
-                const speedMultiplier = 0.1;
-                this.dx = ((Math.random() - 0.5) * 2 + speedMultiplier/2);
-                this.dy = ((Math.random() - 0.5) * 2 + speedMultiplier/2);
-            
-                this.rotation = Math.random() * Math.PI * 2;
-                this.rotationSpeed = (Math.random() - 0.5) * 0.2;
-            
-                const colors = ['#ff5252', '#58a6ff', '#ffe066', '#66ff91'];
-                this.color = colors[Math.floor(Math.random() * colors.length)];
-            
-                this.points = [];
-                const numPoints = 8;
-                for (let i = 0; i < numPoints; i++) {
-                    const ang = (i / numPoints) * Math.PI * 2;
-                    const radius = this.size/2 * (0.9 + Math.random() * 0.4);
-                    this.points.push({
-                        x: Math.cos(ang) * radius,
-                        y: Math.sin(ang) * radius
-                    });
-                }
-            }
+  // Utilidades
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const lerp=(a,b,t)=>a+(b-a)*t;
+  const fract=v=>v-Math.floor(v);
+  const randRange=(a,b)=>a+Math.random()*(b-a);
 
-            draw() {
-                ctx.save();
-                ctx.translate(this.x, this.y);
-                ctx.rotate(this.rotation);
-            
-                ctx.beginPath();
-                ctx.moveTo(this.points[0].x, this.points[0].y);
-                for (let i = 1; i < this.points.length; i++) {
-                    ctx.lineTo(this.points[i].x, this.points[i].y);
-                }
-                ctx.closePath();
-            
-                // estilo com brilho
-                ctx.lineWidth = 2.5;
-                ctx.strokeStyle = this.color;
-                ctx.fillStyle = this.color + '22'; // leve preenchimento translúcido
-                ctx.shadowColor = this.color;
-                ctx.shadowBlur = 14;
-            
-                ctx.fill();
-                ctx.stroke();
-                ctx.restore();
-            }
+  // Controles
+  window.addEventListener('keydown',e=>{ if(e.key==='ArrowUp'||e.key==='w') up=true; if(e.key==='ArrowDown'||e.key==='s') down=true; if(e.key===' '||e.code==='Space'||e.key==='Enter') fire(); });
+  window.addEventListener('keyup',e=>{ if(e.key==='ArrowUp'||e.key==='w') up=false; if(e.key==='ArrowDown'||e.key==='s') down=false; });
+  canvas.addEventListener('mouseenter',()=>{mouseActive=true});
+  canvas.addEventListener('mouseleave',()=>{mouseActive=false; mouseY=null});
+  canvas.addEventListener('mousemove',e=>{ const rect=canvas.getBoundingClientRect(); mouseY=(e.clientY-rect.top); });
+  canvas.addEventListener('mousedown',()=>{ fire(); });
+  window.addEventListener('blur',()=>{ up=down=false; });
+  window.addEventListener('resize', resize);
 
-            update() {
-                this.x += this.dx;
-                this.y += this.dy;
-                this.rotation += this.rotationSpeed;
-
-                if(this.x < -this.size) this.x = canvas.width + this.size;
-                if(this.x > canvas.width + this.size) this.x = -this.size;
-                if(this.y < -this.size) this.y = canvas.height + this.size;
-                if(this.y > canvas.height + this.size) this.y = -this.size;
-            }
-
-            split() {
-                if(this.size > 20) {
-                    const newSize = this.size / 2;
-                    const meteor1 = new Meteor(newSize);
-                    const meteor2 = new Meteor(newSize);
-
-                    meteor1.x = this.x; meteor1.y = this.y;
-                    meteor2.x = this.x; meteor2.y = this.y;
-
-                    meteor1.dx = this.dx + (Math.random() - 0.5) * 2;
-                    meteor1.dy = this.dy + (Math.random() - 0.5) * 2;
-                    meteor2.dx = this.dx + (Math.random() - 0.5) * 2;
-                    meteor2.dy = this.dy + (Math.random() - 0.5) * 2;
-
-                    meteors.push(meteor1);
-                    meteors.push(meteor2);
-                }
-            }
-        }
-
-        // Game controls
-        let rotatingLeft = false;
-        let rotatingRight = false;
-        let shooting = false;
-        let thrusting = false;  // NOVO: acelerando pra frente
-        let lastShot = 0;
-
-        // Add pause state variable at the top with other game states
-        let isPaused = false;
-        let isGameOver = false;
-        // Add to the keydown event listener
-        document.addEventListener('keydown', (e) => {
-            if(e.key === 'ArrowLeft') rotatingLeft = true;
-            if(e.key === 'ArrowRight') rotatingRight = true;
-            if(e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') thrusting = true;
-            if(e.key.toLowerCase() === 'x') shooting = true; // tiro com X
-            if(e.key.toLowerCase() === 'p') isPaused = !isPaused; // Toggle pause
-        });
-
-        // Modify the gameLoop function
-        document.addEventListener('keyup', (e) => {
-            if(e.key === 'ArrowLeft') rotatingLeft = false;
-            if(e.key === 'ArrowRight') rotatingRight = false;
-            if(e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') thrusting = false;
-            if(e.key.toLowerCase() === 'x') shooting = false; // soltar X
-        });
-
-        // Remova todas as outras funções draw() e gameLoop() e mantenha apenas esta versão:
-        // Adicione a função draw antes do gameLoop
-                function draw() {
-                    ctx.fillStyle = 'black';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                    // Estrelas com movimento e brilho
-                    stars.forEach(star => {
-                        const alpha = star.alphaBase * (0.6 + 0.4 * Math.sin(star.tw));
-                        ctx.save();
-                        ctx.globalAlpha = alpha;
-                        ctx.fillStyle = '#ffffff';
-                        ctx.beginPath();
-                        ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.restore();
-                    });
-
-                    // Nave
-                    ctx.save();
-                    ctx.translate(ship.x, ship.y);
-                    ctx.rotate(ship.rotation);
-
-                    // glow da nave
-                    ctx.shadowColor = '#7df9ff';
-                    ctx.shadowBlur = 15;
-
-                    // corpo da nave
-                    ctx.beginPath();
-                    ctx.moveTo(0, -ship.size);
-                    ctx.lineTo(ship.size/2, ship.size);
-                    ctx.lineTo(-ship.size/2, ship.size);
-                    ctx.closePath();
-
-                    const grad = ctx.createLinearGradient(0, -ship.size, 0, ship.size);
-                    grad.addColorStop(0, '#ffffff');
-                    grad.addColorStop(1, '#7df9ff');
-                    ctx.strokeStyle = '#c8f7ff';
-                    ctx.fillStyle = grad;
-                    ctx.lineWidth = 2;
-                    ctx.fill();
-                    ctx.stroke();
-
-                    // chama de propulsão quando ACELERANDO
-                    if (thrusting) {
-                        ctx.beginPath();
-                        ctx.moveTo(0, ship.size);
-                        ctx.lineTo(6, ship.size + 14 + Math.random() * 6);
-                        ctx.lineTo(-6, ship.size + 14 + Math.random() * 6);
-                        ctx.closePath();
-                        const flameGrad = ctx.createLinearGradient(0, ship.size, 0, ship.size + 20);
-                        flameGrad.addColorStop(0, '#ffd166');
-                        flameGrad.addColorStop(1, '#ff4d4d');
-                        ctx.fillStyle = flameGrad;
-                        ctx.shadowColor = '#ffb347';
-                        ctx.shadowBlur = 25;
-                        ctx.fill();
-                    }
-
-                    ctx.restore();
-
-                    // Tiros
-                    ctx.fillStyle = '#fffb6a';
-                    bullets.forEach(bullet => {
-                        ctx.save();
-                        ctx.shadowColor = '#fffb6a';
-                        ctx.shadowBlur = 16;
-                        ctx.beginPath();
-                        ctx.arc(bullet.x, bullet.y, bullet.size, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.restore();
-                    });
-
-                    // Partículas
-                    particles.forEach(p => {
-                        ctx.save();
-                        ctx.globalAlpha = Math.max(0, p.life / 42);
-                        ctx.fillStyle = p.color || '#ffffff';
-                        ctx.shadowColor = p.color || '#ffffff';
-                        ctx.shadowBlur = 12;
-                        ctx.beginPath();
-                        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.restore();
-                    });
-
-                    // Meteoros
-                    meteors.forEach(meteor => meteor.draw());
-
-                    // Tela de game over
-                    if (isGameOver) {
-                        ctx.save();
-                        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                        ctx.fillStyle = 'red';
-                        ctx.shadowColor = 'red';
-                        ctx.shadowBlur = 18;
-                        ctx.font = '72px Arial';
-                        ctx.textAlign = 'center';
-                        ctx.fillText('GAME OVER', canvas.width/2, canvas.height/2);
-                        ctx.font = '36px Arial';
-                        ctx.fillStyle = 'white';
-                        ctx.shadowColor = 'white';
-                        ctx.shadowBlur = 10;
-                        ctx.fillText(`Score: ${points}`, canvas.width/2, canvas.height/2 + 50);
-                        ctx.restore();
-                    }
-
-                    // Pausa
-                    if (isPaused) {
-                        ctx.save();
-                        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                        ctx.fillStyle = 'yellow';
-                        ctx.font = '48px Arial';
-                        ctx.textAlign = 'center';
-                        ctx.shadowColor = 'yellow';
-                        ctx.shadowBlur = 12;
-                        ctx.fillText('PAUSA', canvas.width/2, canvas.height/2);
-                        ctx.restore();
-                    }
-                }
-        // Adicione estas funções antes do gameLoop
-                function shoot() {
-                    const now = Date.now();
-                    if(now - lastShot > 100) {
-                        const angle = ship.rotation - Math.PI/2;
-                        bullets.push({
-                            x: ship.x + Math.cos(angle) * ship.size,
-                            y: ship.y + Math.sin(angle) * ship.size,
-                            dx: Math.cos(angle) * 8,
-                            dy: Math.sin(angle) * 8,
-                            size: 3.5
-                        });
-                        lastShot = now;
-                    }
-                }
-
-                function update() {
-                    if (isGameOver) return;
-
-                    // Rotação e tiro
-                    if(rotatingLeft) ship.rotation -= 0.05;
-                    if(rotatingRight) ship.rotation += 0.05;
-                    if(shooting) shoot();
-
-                    // MOVIMENTO da nave
-                    const angle = ship.rotation - Math.PI/2;
-                    const accel = 0.15;
-                    if (thrusting) {
-                        ship.vx += Math.cos(angle) * accel;
-                        ship.vy += Math.sin(angle) * accel;
-                    }
-                    // aplicar inércia e atrito leve
-                    ship.x += ship.vx;
-                    ship.y += ship.vy;
-                    ship.vx *= 0.99;
-                    ship.vy *= 0.99;
-                    // wrap nas bordas
-                    if (ship.x < 0) ship.x = canvas.width;
-                    if (ship.x > canvas.width) ship.x = 0;
-                    if (ship.y < 0) ship.y = canvas.height;
-                    if (ship.y > canvas.height) ship.y = 0;
-
-                    // Estrelas (movimento + cintilação)
-                    stars.forEach(star => {
-                        star.y += star.speed;
-                        if (star.y > canvas.height) {
-                            star.y = -2;
-                            star.x = Math.random() * canvas.width;
-                        }
-                        star.tw += 0.05;
-                    });
-
-                    // Tiros
-                    bullets = bullets.filter(bullet => {
-                        bullet.x += bullet.dx;
-                        bullet.y += bullet.dy;
-                        return bullet.x > 0 && bullet.x < canvas.width &&
-                               bullet.y > 0 && bullet.y < canvas.height;
-                    });
-
-                    // Meteoros e colisão com a nave
-                    meteors.forEach(meteor => {
-                        meteor.update();
-
-                        const dx = meteor.x - ship.x;
-                        const dy = meteor.y - ship.y;
-                        const distance = Math.sqrt(dx * dx + dy * dy);
-
-                        if(distance < (meteor.size/2 + ship.size/2)) {
-                            isGameOver = true;
-                            // Limpa inputs
-                            rotatingLeft = false;
-                            rotatingRight = false;
-                            shooting = false;
-                            thrusting = false; // NOVO
-
-                            setTimeout(() => {
-                                isGameOver = false;
-                                meteors = [];
-                                bullets = [];
-                                particles = [];
-                                points = 0;
-                                pointsDisplay.textContent = points;
-                                ship.x = canvas.width / 2;
-                                ship.y = canvas.height / 2;
-                                ship.rotation = 0;
-                                ship.vx = 0; // NOVO
-                                ship.vy = 0; // NOVO
-                                createInitialMeteors();
-                            }, 4000);
-                        }
-                    });
-
-                    // Colisão tiro x meteoro
-                    bullets.forEach((bullet, bulletIndex) => {
-                        meteors.forEach((meteor, meteorIndex) => {
-                            const dx = bullet.x - meteor.x;
-                            const dy = bullet.y - meteor.y;
-                            const distance = Math.sqrt(dx * dx + dy * dy);
-
-                            if(distance < meteor.size/2) {
-                                // remove tiro e meteoro
-                                bullets.splice(bulletIndex, 1);
-                                meteors.splice(meteorIndex, 1);
-
-                                // Explode e pontua por tamanho
-                                createExplosion(meteor.x, meteor.y, meteor.color);
-                                const gained = meteor.size >= 80 ? 5 : (meteor.size >= 40 ? 10 : 20);
-                                points += gained;
-                                pointsDisplay.textContent = points;
-
-                                // Split em 2
-                                meteor.split();
-                            }
-                        });
-                    });
-
-                    // Atualiza partículas (desaparecem com o tempo)
-                    particles = particles.filter(p => {
-                        p.x += p.dx;
-                        p.y += p.dy;
-                        p.dx *= 0.985;
-                        p.dy *= 0.985;
-                        p.life -= 1;
-                        return p.life > 0;
-                    });
-
-                    // Spawn de novos meteoros (com cooldown)
-                    const now = Date.now();
-                    if (now - lastMeteorSpawn > 300) {
-                        const bigMeteors = meteors.filter(m => m.size >= 80).length;
-                        if (bigMeteors < 3) {
-                            let spawnSize = Math.random() * 20 + 80; // 80 a 100 para grandes
-                            meteors.push(new Meteor(spawnSize));
-                        } else if (meteors.length < 15) {
-                            let spawnSize = Math.random() * 40 + 40; // 40 a 80 para médios
-                            meteors.push(new Meteor(spawnSize));
-                        }
-                        lastMeteorSpawn = now;
-                    }
-                }
-        // Início do jogo: cria meteoros iniciais e inicia o loop
-        createInitialMeteors();
-        
-        function gameLoop() {
-            if (!isPaused) {
-                update();
-            }
-            draw();
-            requestAnimationFrame(gameLoop);
-        }
-        
-        gameLoop();
-    </script>
+  // Start
+  resize();
+  requestAnimationFrame(tick);
+})();
+</script>
 </body>
 </html>
