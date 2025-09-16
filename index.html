@@ -95,9 +95,9 @@
                 this.y = canvas.height/2 + Math.sin(angle) * distance;
             
                 // velocidade aleatória
-                const speedMultiplier = 0.1;
-                this.dx = ((Math.random() - 0.5) * 1.1 + speedMultiplier/2);
-                this.dy = ((Math.random() - 0.5) * 1.1 + speedMultiplier/2);
+                const speedMultiplier = 0.06; // antes: 0.1
+                this.dx = ((Math.random() - 0.5) * 0.8 + speedMultiplier/2); // antes: * 1.1
+                this.dy = ((Math.random() - 0.5) * 0.8 + speedMultiplier/2); // antes: * 1.1
             
                 this.rotation = Math.random() * Math.PI * 2;
                 this.rotationSpeed = (Math.random() - 0.5) * 0.2;
@@ -161,10 +161,10 @@
                     meteor1.x = this.x; meteor1.y = this.y;
                     meteor2.x = this.x; meteor2.y = this.y;
 
-                    meteor1.dx = this.dx * 0.8 + (Math.random() - 0.5) * 2;
-                    meteor1.dy = this.dy * 0.8 + (Math.random() - 0.5) * 2;
-                    meteor2.dx = this.dx * 0.8 + (Math.random() - 0.5) * 2;
-                    meteor2.dy = this.dy * 0.8 + (Math.random() - 0.5) * 2;
+                    meteor1.dx = this.dx * 0.7 + (Math.random() - 0.5) * 1.2;
+                    meteor1.dy = this.dy * 0.7 + (Math.random() - 0.5) * 1.2;
+                    meteor2.dx = this.dx * 0.7 + (Math.random() - 0.5) * 1.2;
+                    meteor2.dy = this.dy * 0.7 + (Math.random() - 0.5) * 1.2;
 
                     meteors.push(meteor1);
                     meteors.push(meteor2);
@@ -331,7 +331,7 @@
         // Adicione estas funções antes do gameLoop
                 function shoot() {
                     const now = Date.now();
-                    if(now - lastShot > 100) {
+                    if(now - lastShot > 70) { // antes: 80
                         const angle = ship.rotation - Math.PI/2;
                         bullets.push({
                             x: ship.x + Math.cos(angle) * ship.size,
@@ -362,7 +362,7 @@
 
                     // MOVIMENTO da nave
                     const angle = ship.rotation - Math.PI/2;
-                    const accel = 0.15;
+                    const accel = 0.18;
                     if (thrusting) {
                         ship.vx += Math.cos(angle) * accel;
                         ship.vy += Math.sin(angle) * accel;
@@ -430,7 +430,7 @@
                                 }, 4000);
                             } else {
                                 invincible = true; // Ativa invencibilidade
-                                invincibleTimer = 180; // Duração da invencibilidade (3 segundos a 60fps)
+                                invincibleTimer = 240; // Duração da invencibilidade (4 segundos a 60fps)
                             }
 
                             // Limpa inputs
@@ -484,12 +484,12 @@
 
                     // Spawn de novos meteoros (com cooldown)
                     const now = Date.now();
-                    if (now - lastMeteorSpawn > 300) {
+                    if (now - lastMeteorSpawn > 700) {
                         const bigMeteors = meteors.filter(m => m.size >= 80).length;
-                        if (bigMeteors < 3) {
+                        if (bigMeteors < 2) {
                             let spawnSize = Math.random() * 80 + 100; // 80 a 100 para grandes
                             meteors.push(new Meteor(spawnSize));
-                        } else if (meteors.length < 15) {
+                        } else if (meteors.length < 10) {
                             let spawnSize = Math.random() * 40 + 40; // 40 a 80 para médios
                             meteors.push(new Meteor(spawnSize));
                         }
